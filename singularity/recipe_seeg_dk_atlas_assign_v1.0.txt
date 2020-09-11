@@ -1,0 +1,73 @@
+Bootstrap: docker
+From: ubuntu:18.04
+
+# Example command to build .simg from local directory: sudo singularity build seeg_dk_atlas_assign_v1.0.simg build seeg_dk_atlas_assign_v1.0.txt
+
+%files
+    # These files must be sitting in the same directory as this recipe file
+    ./main.py /tmp
+    ./main.sh /tmp
+    ./fs_files/ /tmp
+
+%post -c /bin/bash
+
+    cd /
+
+    # Prepare directories for installing applications
+    mkdir -p APPS
+    mkdir -p INSTALLERS
+
+    # Update all libraries
+    apt-get -y update
+
+    # Install xvfb
+    apt-get -y install xvfb
+
+    # Install ghostscript for pdf management
+    apt-get -y install ghostscript
+
+    # Install MRTrix3
+    apt-get -y install git g++ python python-numpy libeigen3-dev zlib1g-dev libqt4-opengl-dev libgl1-mesa-dev libfftw3-dev libtiff5-dev python3-distutils
+    cd APPS
+    git clone https://github.com/MRtrix3/mrtrix3.git
+    cd mrtrix3
+    git checkout 3.0.0
+    ./configure
+    ./build
+    echo "NIfTIUseSform: 1" > /etc/mrtrix.conf # prefer sform to qform when they both exist (to align with nibabel behavior. FSL maintains both--see https://community.mrtrix.org/t/inconsistent-qform-sform-on-nifti-image/1663)
+    cd /
+
+    # Make custom folders
+    mkdir -p INPUTS
+    mkdir -p SUPPLEMENTAL
+    mkdir -p OUTPUTS
+    mkdir -p CODE
+
+    # Add scripts to CODE folder
+    cp /tmp/main.py /CODE
+    cp /tmp/main.sh /CODE
+    cp -r /tmp/fs_files/ /CODE
+
+    # Set Permissions
+    chmod -R 775 /INPUTS
+    chmod -R 775 /SUPPLEMENTAL
+    chmod -R 775 /APPS
+    chmod -R 775 /OUTPUTS 
+    chmod -R 775 /CODE
+
+    # Clean up
+    rm -r /INSTALLERS
+
+    # Make python3 virtual environment
+    python3 -m venv /CODE/virt_env/
+    
+    source /CODE/virt_env/bin/activate
+    
+    apt-get -y install python-nibabel
+
+    deactivate
+
+%environment -c /bin/bash
+
+    # MRTrix3
+    export PATH="/APPS/mrtrix3/bin:$PATH"
