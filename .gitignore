@@ -1,1 +1,3 @@
 /singularity/*.simg
+/inputs/*
+/outputs/*
