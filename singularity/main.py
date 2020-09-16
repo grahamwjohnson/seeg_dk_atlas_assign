@@ -9,7 +9,7 @@ import sys
 
 # Need to include the path to the MRTrix3 libraries to run MRTrix3 commands
 sys.path.insert(0, '/APPS/mrtrix3/lib')
-from mrtrix3 import app, file, fsl, image, path, run
+from mrtrix3 import app, fsl, image, path, run
 
 print("Finished importing python modules")
 
@@ -18,26 +18,289 @@ out_phrase = "Hello from Bash called by Python called by Bash!"
 cmd = 'echo {}'.format(out_phrase) # how to run bash commands from python
 subprocess.check_call(cmd, shell=True)
 
+# This function goes and looks for the fs_default.txt LUT that is provided  by freesurfer and returns the
+# names of the regions so that they can be used in "createROI" function to make a csv
+def ROINames(LUTpath, offset):
+    # Get length of atlas LUT
+    with open(LUTpath) as csvfile:
+        reader = csv.reader(csvfile, delimiter=' ')
+        FS_row_count = sum(1 for row in reader)
+
+    # Initialize matrix to hold all ppr lines and labels
+    raw_fsDefault = ["" for x in range(FS_row_count)]
+    with open(LUTpath) as csvfile:
+        index = 0
+        reader = csv.reader(csvfile, delimiter=' ')
+        for row in reader:
+            raw_fsDefault[index] = row
+            index = index + 1
+
+    # get rid of first few lines
+    raw_fsDefault = raw_fsDefault[offset:]
+    # initialize region name, will trim downafter assignments finished.
+    DKSname = ["" for x in range(len(raw_fsDefault))]
+    regionCount = 0
+    for i in range(len(raw_fsDefault)):
+        # assign ROI to proper index listed in first colum
+        if raw_fsDefault[i] != []:
+            # print raw_fsDefault[i]
+            roi = int(raw_fsDefault[i][0])
+            # Find the 3rd non-empty cell
+            nonEmptyCount = 0
+            name = 'NA'
+            for j in range(len(raw_fsDefault[i])):
+                if raw_fsDefault[i][j] != '':
+                    nonEmptyCount = nonEmptyCount + 1
+                if nonEmptyCount == 3:
+                    name = raw_fsDefault[i][j]
+                    break
+            DKSname[roi - 1] = name
+            regionCount = regionCount + 1
+    # Trim array to proper size, remember fr later that ROI number will be off by 1
+    DKSname = DKSname[:regionCount]
+    return DKSname
+
+
+# This function will read in a .ppr file to get bipole coordinates and it will save a csv that contains all of the parcellation assignments
+# (and create an <ROI>.mif with the radius of each ROI being the distance between contacts for each bipole)
+def assign_ROI(ppr, offset, T1_forAtlas):
+    # Only create an ROI if PPR file is in folder
+    if os.path.isfile(ppr):
+        # Get number of lines in ppr
+        with open(ppr) as csvfile:
+            reader = csv.reader(csvfile, delimiter=' ')
+            row_count = sum(1 for row in reader)
+            # print(row_count)
+
+        # Initialize matrix to hold all ppr lines and labels
+        raw_ppr = ["" for x in range(row_count)]
+        LEAD_CONTACT_index = -1
+
+        # open the PPR and find start of contact assignments.
+        # Take the last 3 numbers in each line
+        # Also store the label names
+        with open(ppr) as csvfile:
+            index = 0
+            reader = csv.reader(csvfile, delimiter=' ')
+            for row in reader:
+                # The row with [LEAD CONTACT] will have a length of 2
+                if len(row) == 2:
+                    if row[0] == '[LEAD' and row[1] == 'CONTACT]':
+                        LEAD_CONTACT_index = index
+                raw_ppr[index] = row
+                index = index + 1
+
+        # This is the first line that has contact information
+        lineOne = LEAD_CONTACT_index + offset
+
+        # Iterate through rows starting from where first contact is listed and stop if [] is encountered
+        index = 0
+        labels = ["" for x in range(row_count)]  # Will trim down below
+        bipCoordsString = ["" for x in range(row_count)]  # Will trim down below
+        emptyLine = -1
+        leadCount = 1
+        bipCount = 0
+        x = [0] * row_count
+        y = [0] * row_count
+        z = [0] * row_count
+        xBip = [0] * row_count  # not all will be used and will need to trim
+        yBip = [0] * row_count  # not all will be used and will need to trim
+        zBip = [0] * row_count  # not all will be used and will need to trim
+        bipDist = [0] * row_count  # not all will be used and will need to trim
+        bipLabelsUsedString = [0] * row_count
+        bipOrigCoordsUsedString = [0] * row_count
+
+        lastRow = ' '
+
+        for i in range(lineOne, row_count - 1, 1):
+            # Store the contact label in a string and coordinates in one string
+            # NOTE: switching to 1 based indexing
+            a = raw_ppr[i]
+            # Stop if the line is empty (i.e. end of contact listing)
+            if a == []:
+                emptyLine = index
+                break
+            labels[index] = a[0] + ' ' + str(int(a[1]) + 1)
+            l = len(a)
+            x[index] = float(a[l - 4])
+            y[index] = float(a[l - 3])
+            z[index] = float(a[l - 2])
+
+            # If same lead make a bipole, otherwsie iterate lead count if new lead
+            if index != 0:
+                if lastRow[0] == a[0]:  # same lead so create bipole
+                    x1 = x[index - 1]
+                    x2 = x[index]
+                    y1 = y[index - 1]
+                    y2 = y[index]
+                    z1 = z[index - 1]
+                    z2 = z[index]
+
+                    # calculate midpoint between contacts
+                    xBip[bipCount] = (x1 + x2) / 2
+                    yBip[bipCount] = (y1 + y2) / 2
+                    zBip[bipCount] = (z1 + z2) / 2
+
+                    # Find the distance between the contacts and use it later for sphere ROI size
+                    bipDist[bipCount] = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2)
+
+                    # Create a string to be used in MRTrix3 commands
+                    bipCoordsString[bipCount] = str(xBip[bipCount]) + ',' + str(yBip[bipCount]) + ',' + str(
+                        zBip[bipCount])
+                    bipOrigCoordsUsedString[bipCount] = 'Contact1: ' + str(x1) + ',' + str(y1) + ',' + str(
+                        z1) + ' Contact2: ' + str(x2) + ',' + str(y2) + ',' + str(z2)
+                    bipLabelsUsedString[bipCount] = str(labels[index - 1]) + ' - ' + str(labels[index])
+
+                    bipCount = bipCount + 1
+                else:
+                    leadCount = leadCount + 1
+
+            lastRow = a
+            index = index + 1
+
+        # delete unused parts of arrays
+        # print emptyLine
+        x = x[:emptyLine]
+        y = y[:emptyLine]
+        z = z[:emptyLine]
+        xBip = xBip[:bipCount]
+        yBip = yBip[:bipCount]
+        zBip = zBip[:bipCount]
+        labels = labels[:emptyLine]
+        bipCoordsString = bipCoordsString[:bipCount]
+        bipOrigCoordsUsedString = bipOrigCoordsUsedString[:bipCount]
+        bipLabelsUsedString = bipLabelsUsedString[:bipCount]
+        bipDist = bipDist[:bipCount]
+
+        print 'Bip Count: ' + str(bipCount)
+        print bipLabelsUsedString
+
+        # Now we will create an ROI from T1_Reg or T1 by setting everything to 0 and assigning regions by
+        # incrementing up by 1 Zero the values of T1_Reg and then assign incrementing sphere ROI values to the
+        # coordinates in bipCoordsStringtr
+        cmd = 'mrcalc {} 0 -mult {}ROI_Contacts_T1regSpace.mif'.format(T1_forAtlas,tmp_dir)
+        subprocess.check_call(cmd, shell=True)
+
+        for i in range(len(bipCoordsString)):
+            cmd = 'mredit -sphere {} {} {} {}ROI_Contacts_T1regSpace.mif'.format(bipCoordsString[i],str(bipDist[i]),str(i + 1),tmp_dir)
+            subprocess.check_call(cmd, shell=True)
+
+        # NOW assign SEEG contacts to DKS atlas
+
+        # Read in T1
+        cmd = 'mrconvert /INPUTS/t1.nii.gz {}T1W3D.nii -force -nthreads 0'.format(tmp_dir)
+        subprocess.check_call(cmd, shell=True)
+
+        # Bring in the parcellation
+        cmd = 'mrconvert /INPUTS/aparc+aseg.mgz {}aparc+aseg.mif -force -nthreads 0'.format(tmp_dir)
+        subprocess.check_call(cmd, shell=True)
+
+        cmd = 'labelconvert {}aparc+aseg.mif {} {} {}parc_init.mif -force -nthreads 0'.format(tmp_dir,fscolorLUT,fsDefault,tmp_dir)
+        subprocess.check_call(cmd, shell=True)
+
+        attempts = 0
+        sgmfix_done = 0
+        while attempts < 3:
+            attempts = attempts + 1
+            try:
+                cmd = 'labelsgmfix {}parc_init.mif {}T1W3D.mif  {} {}parc.mif -force -nthreads 0 -scratch /tmp'.format(tmp_dir,tmp_dir,fsDefault,tmp_dir)
+                subprocess.check_call(cmd, shell=True)
+                sgmfix_done = 1
+                break
+            except Exception as error:
+                print("labelsgmfix failed, trying again")
+
+        if sgmfix_done == 0:
+            raise Exception("labelsgmfix failed all attempts")
+
+        # mrconvert the parc.mif to results
+        cmd = 'mrconvert {}parc.mif {}parc.nii.gz -force -nthreads 0'.format(tmp_dir,results_dir)
+        subprocess.check_call(cmd, shell=True)
+
+
+        # Need to regrig parc so that it is the same as T1reg or T1 because T1reg or T1 was used to make SEEG ROI
+        cmd = 'mrtransform -template {} {}parc.mif {}parc_regridT1.nii -interp nearest'.format(T1_forAtlas,tmp_dir,tmp_dir)
+        subprocess.check_call(cmd, shell=True)
+
+
+
+        ################
+        # Get the strides from T1_Reg so that we can convert parc with same strides so that indexing is straighforward
+        ROI_header = image.Header(tmp_dir + 'ROI_Contacts_T1regSpace.mif')
+        ROI_strides = ROI_header.strides()
+        ROI_strides_option = ' -strides ' + ','.join([str(i) for i in ROI_strides])
+
+        cmd = 'mrconvert {}parc_regridT1.nii {}parc_strideSameAsT1Reg_regridT1.nii -strides 1,2,3'.format(tmp_dir,tmp_dir)
+        subprocess.check_call(cmd, shell=True)
+
+        # import the nifti with nibabel and numpy and read coordinate values
+        imgPath = tmp_dir + 'parc_strideSameAsT1Reg_regridT1.nii'
+        img = nib.load(imgPath)
+        data = np.array(img.dataobj)
+
+        # Get strides to verify same as T1_reg. If they are not equal, indexing will be a headache
+        parc_header = image.Header(imgPath)
+        parc_strides = parc_header.strides()
+        # print 'Parc Strides: ' + str(parc_strides)
+        if parc_strides != ROI_strides:
+            print 'Error: T1_registered or T1 strides(' + str(ROI_strides) + ') do not equal ' + imgPath + ' strides(' + str(
+                parc_strides) + ')'
+            raise Exception(err)
+
+        # Assign intensity values to each Bip Coord if value is whole number
+        DKS_assignment = [-1] * bipCount
+        for i in range(bipCount):
+            point = data[int(round(xBip[i])), int(round(yBip[i])), int(round(zBip[i]))]
+            res = point - int(point)
+            if res != 0:
+                print 'Error: Interpolated, intensity not whole number for point: ' + str(point)
+            else:
+                DKS_assignment[i] = int(point)
+
+        # pull in the DKS atlas names to assign ROI numbers proper region name
+        DKSname = ROINames(fsDefault, lineOffestFSdefault)
+
+        # Write a CSV file with the labels and coordinates
+        with open(results_dir + 'SEEG_BipMontage_ROI_Assignments.csv', 'wb') as csvfile:
+            filewriter = csv.writer(csvfile, delimiter=',')
+            filewriter.writerow(
+                ['Bipole Number', 'Bip Label', 'DKS Assignment', 'DKS Region Name', 'Bip Coord String',
+                 'Original Coords', 'Bip Distance'])
+            for i in range(bipCount):
+                # print bipLabelsUsedString[i]
+                if DKS_assignment[i] != 0:
+                    name = DKSname[DKS_assignment[i] - 1]  # -1 because of zero indexing
+                else:
+                    name = 'NA'
+                filewriter.writerow(
+                    [str(i + 1), bipLabelsUsedString[i], DKS_assignment[i], name, bipCoordsString[i],
+                     bipOrigCoordsUsedString[i], bipDist[i]])
+        print('Created SEEG_BipMontage_ROI_Assignments.csv')
+
+    else:
+        print('****** ERROR: No PPR file found, thus no ROI created and no atlas assignments made')
 
 
 
 
 
+# Set up variables for reading in .ppr
+pprFilename = '/INPUTS/crave.ppr'
+lineOffsetFromLEADCONTACT = 5
+fsDefault = '/CODE/fs_files/fs_default.txt'
+fscolorLUT = '/CODE/fs_files/FreeSurferColorLUT.txt'
+lineOffestFSdefault = 4
+T1_forAtlas = '/INPUTS/t1.nii'
 
 
-
-
-
-
-
-
-
-
-
-
+# Get timestamps for directories
+seconds = time.time()
+tstring = str(time.asctime(time.localtime(seconds)))
+tstring = tstring.replace(' ','_')
+tstring = tstring.replace(':','')
 
 # Make a temporary subdirectory that will be deleted after processing to save space
-tmp_dir = "/OUTPUTS/tmp/"
+tmp_dir = "/OUTPUTS/tmp_" + tstring + "/"
 if not os.path.exists(tmp_dir):
     os.mkdir(tmp_dir)
     print("Created 'tmp' directory")
@@ -45,195 +308,16 @@ else:
     print("'tmp' directory already exists")
 
 # Make the final results subdirectory
-results_dir = "/OUTPUTS/results/"
+results_dir = "/OUTPUTS/results_" + tstring + "/"
 if not os.path.exists(results_dir):
     os.mkdir(results_dir)
     print("Created 'results' directory")
 else:
     print("'results' directory already exists")
 
-# Do all of the processing in 'tmp' directory   
 
-cmd ='mrconvert /INPUTS/dwmri.nii.gz -fslgrad /INPUTS/dwmri.bvec /INPUTS/dwmri.bval {}DWI_qav7_preprocessed.mif -force -nthreads 0'.format(tmp_dir)
-subprocess.check_call(cmd, shell=True)
+assign_ROI(pprFilename, lineOffsetFromLEADCONTACT, T1_forAtlas)
 
-cmd = 'dwibiascorrect ants {}DWI_qav7_preprocessed.mif  {}DWI_biascorrect_preprocessed.mif -scratch /tmp -force -nthreads 0'.format(tmp_dir,tmp_dir) 
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'dwi2mask {}DWI_biascorrect_preprocessed.mif {}dwi_mask.mif -force -nthreads 0'.format(tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'maskfilter {}dwi_mask.mif dilate {}dwi_mask_dilated.mif -npass 3 -force -nthreads 0'.format(tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'dwi2tensor {}DWI_biascorrect_preprocessed.mif -mask {}dwi_mask.mif - | tensor2metric - -fa {}fa.mif -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-# Copy fa.mif to results directory
-cmd = 'mrconvert {}fa.mif {}fa.nii.gz -force -nthreads 0'.format(tmp_dir,results_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'dwi2response dhollander {}DWI_biascorrect_preprocessed.mif {}response_wm.txt {}response_gm.txt {}response_csf.txt -mask {}dwi_mask.mif -force -nthreads 0 -scratch /tmp'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'dwi2fod msmt_csd {}DWI_biascorrect_preprocessed.mif {}response_wm.txt {}FOD_WM.mif {}response_csf.txt {}FOD_CSF.mif -mask {}dwi_mask_dilated.mif -lmax 10,0 -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-# Steps to register T1 to DWI space
-cmd = 'mrconvert /INPUTS/t1.nii.gz {}T1W3D.mif -force -nthreads 0'.format(tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrconvert /INPUTS/t1.nii.gz {}T1W3D.nii -force -nthreads 0'.format(tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-T1_header = image.Header('{}T1W3D.mif'.format(tmp_dir))
-T1_revert_strides_option = ' -strides ' + ','.join([str(i) for i in T1_header.strides()])
-print(T1_revert_strides_option)
-
-cmd = 'runROBEX.sh {}T1W3D.nii {}T1W3D_initialBrain.nii {}T1W3D_initialMask.nii'.format(tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-# Have to reslice the mask due to 1e-6 header matching required by ANTS: https://github.com/MRtrix3/mrtrix3/issues/859
-cmd = 'mrtransform {}T1W3D_initialMask.nii {}T1W3D_initialMask_resliced.nii -template {}T1W3D.nii -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'N4BiasFieldCorrection -i {}T1W3D.nii -w {}T1W3D_initialMask_resliced.nii -o {}T1W3D_biascorr.nii'.format(tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'runROBEX.sh {}T1W3D_biascorr.nii {}T1W3D_biascorr_brain.nii {}T1W3D_biascorr_brain_mask.nii'.format(tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = ('mrconvert {}T1W3D_biascorr_brain.nii {}T1W3D_biascorr_brain.mif -force -nthreads 0' + T1_revert_strides_option).format(tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = ('mrconvert {}T1W3D_biascorr_brain_mask.nii {}T1W3D_mask.mif -datatype bit -force -nthreads 0' + T1_revert_strides_option).format(tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'dwiextract {}DWI_biascorrect_preprocessed.mif -bzero - | mrcalc - 0.0 -max - | mrmath - mean -axis 3 {}dwi_meanbzero.mif -force -nthreads 0'.format(tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrcalc 1 {}dwi_meanbzero.mif -div {}dwi_mask.mif -mult - | mrhistmatch nonlinear - {}T1W3D_biascorr_brain.mif {}dwi_pseudoT1.mif -mask_input {}dwi_mask.mif -mask_target {}T1W3D_mask.mif -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrcalc 1 {}T1W3D_biascorr_brain.mif -div {}T1W3D_mask.mif -mult - | mrhistmatch nonlinear - {}dwi_meanbzero.mif {}T1W3D_pseudobzero.mif -mask_input {}T1W3D_mask.mif -mask_target {}dwi_mask.mif -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrregister {}T1W3D_biascorr_brain.mif {}dwi_pseudoT1.mif -type rigid -mask1 {}T1W3D_mask.mif -mask2 {}dwi_mask.mif -rigid {}rigid_T1_to_pseudoT1.txt -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrregister {}T1W3D_pseudobzero.mif {}dwi_meanbzero.mif -type rigid -mask1 {}T1W3D_mask.mif -mask2 {}dwi_mask.mif -rigid {}rigid_pseudobzero_to_bzero.txt -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'transformcalc {}rigid_T1_to_pseudoT1.txt {}rigid_pseudobzero_to_bzero.txt average {}rigid_T1_to_dwi.txt -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrtransform {}T1W3D.mif {}T1W3D_registered.mif -linear {}rigid_T1_to_dwi.txt -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrtransform {}T1W3D_mask.mif {}T1W3D_mask_registered.mif -linear {}rigid_T1_to_dwi.txt -template {}T1W3D_registered.mif -interp nearest -datatype bit -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-# mrconvert the T1_registered to results directory
-cmd = 'mrconvert {}T1W3D_registered.mif {}T1W3D_registered.nii.gz -force -nthreads 0'.format(tmp_dir,results_dir)
-subprocess.check_call(cmd, shell=True)
-
-attempts = 0
-fiveTTdone = 0
-while attempts < 3:
-    attempts = attempts + 1
-    try:
-        cmd = '5ttgen fsl {}T1W3D_registered.mif {}5TT.mif -force -nthreads 0 -scratch /tmp'.format(tmp_dir,tmp_dir)
-        subprocess.check_call(cmd, shell=True)
-        fiveTTdone = 1
-        break
-    except Exception as error:
-        print("5TTgen failed, trying again")
-
-if fiveTTdone == 0:
-    raise Exception("5TTgen failed all atempts")
-
-# Save 5TT and 5TT_vis in results directory
-cmd = 'mrconvert {}5TT.mif {}5TT.nii.gz -force -nthreads 0'.format(tmp_dir, results_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = '5tt2vis {}5TT.mif {}5TT_vis.nii.gz -force -nthreads 0'.format(tmp_dir,results_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrconvert /INPUTS/aparc+aseg.mgz {}aparc+aseg.mif -force -nthreads 0'.format(tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-cmd = 'mrtransform {}aparc+aseg.mif {}aparc+aseg_registered.mif -linear {}rigid_T1_to_dwi.txt -template {}T1W3D_registered.mif -interp nearest -force -nthreads 0'.format(tmp_dir,tmp_dir,tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-#DEBUGGING - output steps surrounding labelconvert because bilateral insula are missing
-#cmd = 'mrconvert {}aparc+aseg_registered.mif {}aparc+aseg_registered.nii.gz'.format(tmp_dir,results_dir)
-#subprocess.check_call(cmd, shell=True)
-# SOLVED: have to manually add L and R insula to FreeSurferColorLUT.txt
-
-cmd = 'labelconvert {}aparc+aseg_registered.mif /CODE/fs_files/FreeSurferColorLUT.txt /APPS/mrtrix3/share/mrtrix3/labelconvert/fs_default.txt {}XNAT_parc_init.mif -force -nthreads 0'.format(tmp_dir,tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-attempts = 0
-sgmfix_done = 0
-while attempts < 3:
-    attempts = attempts + 1
-    try:
-        cmd = 'labelsgmfix {}XNAT_parc_init.mif {}T1W3D_registered.mif  /APPS/mrtrix3/share/mrtrix3/labelconvert/fs_default.txt {}parc.mif -force -nthreads 0 -scratch /tmp'.format(tmp_dir,tmp_dir,tmp_dir)
-        subprocess.check_call(cmd, shell=True)
-        sgmfix_done = 1
-        break
-    except Exception as error:
-        print("labelsgmfix failed, trying again")
-
-if sgmfix_done == 0:
-    raise Exception("labelsgmfix failed all atempts")
-
-# mrconvert the parc.mif to results
-cmd = 'mrconvert {}parc.mif {}parc.nii.gz -force -nthreads 0'.format(tmp_dir,results_dir)
-subprocess.check_call(cmd, shell=True)
-
-
-#Run multiple times to attempt to capture stochasticity and to enable data augmenting
-#Delete each.tck after each individual run to save space
-
-for i in range(loops):
-    print("Connectome iteration: " + str(i+1))
-    tck_tmp_dir = tmp_dir + "tck_tmp/"
-    if not os.path.exists(tck_tmp_dir):
-        os.mkdir(tck_tmp_dir)
-        print("Created 'tck_tmp' directory within 'tmp'")
-    else:
-        print("'tck_tmp' directory already exists")
-
-    cmd = 'tckgen {}FOD_WM.mif {}10M.tck -act {}5TT.mif -backtrack -crop_at_gmwmi -maxlength 250 -power 0.33 -select 10000000 -seed_dynamic {}FOD_WM.mif -force -nthreads 0'.format(tmp_dir,tck_tmp_dir,tmp_dir,tmp_dir)
-    subprocess.check_call(cmd, shell=True)
-
-    cmd = 'tcksift2 {}10M.tck {}FOD_WM.mif {}10M_SIFT2_weights.csv -act {}5TT.mif -out_mu {}10M_mu.txt -fd_scale_gm -force -nthreads 0'.format(tck_tmp_dir,tmp_dir,tck_tmp_dir,tmp_dir,tck_tmp_dir)
-    subprocess.check_call(cmd, shell=True)
-
-    # Meanlenghth connectome
-    cmd = 'tck2connectome {}10M.tck {}parc.mif {}meanlength_connectome_{}.csv -scale_length -stat_edge mean -symmetric -force -nthreads 0'.format(tck_tmp_dir,tmp_dir,results_dir,str(i+1))
-    subprocess.check_call(cmd, shell=True)
-
-    # Connectome with only SIFT2 correction
-    cmd = 'tck2connectome {}10M.tck {}parc.mif {}SIFT2_connectome_{}.csv -tck_weights_in {}10M_SIFT2_weights.csv -symmetric -force -nthreads 0'.format(tck_tmp_dir,tmp_dir,results_dir,str(i+1),tck_tmp_dir)
-    subprocess.check_call(cmd, shell=True)
-
-    # Mean FA connectome
-    cmd = 'tcksample {}10M.tck {}fa.mif {}mean_FA_per_streamline.csv -stat_tck mean; tck2connectome {}10M.tck {}parc.mif {}meanFA_connectome_{}.csv -scale_file {}mean_FA_per_streamline.csv -stat_edge mean -symmetric -force -nthreads 0'.format(tck_tmp_dir,tmp_dir,tck_tmp_dir,tck_tmp_dir,tmp_dir,results_dir,str(i+1),tck_tmp_dir)
-    subprocess.check_call(cmd, shell=True)
-
-    # Delete the TCK temporary directory
-    cmd = 'rm -r {}'.format(tck_tmp_dir)
-    subprocess.check_call(cmd, shell=True)
-
-print("All connectome iterations complete")
-
-# Delete the temporary directory
-cmd = 'rm -r {}'.format(tmp_dir)
-subprocess.check_call(cmd, shell=True)
-
-print("Removed tmp directory")
 print("Script complete")
 
 
