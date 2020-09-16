@@ -63,7 +63,7 @@ def ROINames(LUTpath, offset):
 
 # This function will read in a .ppr file to get bipole coordinates and it will save a csv that contains all of the parcellation assignments
 # (and create an <ROI>.mif with the radius of each ROI being the distance between contacts for each bipole)
-def assign_ROI(ppr, offset, T1_forAtlas):
+def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
     # Only create an ROI if PPR file is in folder
     if os.path.isfile(ppr):
         # Get number of lines in ppr
@@ -188,11 +188,11 @@ def assign_ROI(ppr, offset, T1_forAtlas):
         # NOW assign SEEG contacts to DKS atlas
 
         # Read in T1
-        cmd = 'mrconvert /INPUTS/t1.nii.gz {}T1W3D.nii -force -nthreads 0'.format(tmp_dir)
+        cmd = 'mrconvert {} {}T1W3D.nii -force -nthreads 0'.format(T1_forAtlas,tmp_dir)
         subprocess.check_call(cmd, shell=True)
 
         # Bring in the parcellation
-        cmd = 'mrconvert /INPUTS/aparc+aseg.mgz {}aparc+aseg.mif -force -nthreads 0'.format(tmp_dir)
+        cmd = 'mrconvert {} {}aparc+aseg.mif -force -nthreads 0'.format(raw_parc,tmp_dir)
         subprocess.check_call(cmd, shell=True)
 
         cmd = 'labelconvert {}aparc+aseg.mif {} {} {}parc_init.mif -force -nthreads 0'.format(tmp_dir,fscolorLUT,fsDefault,tmp_dir)
@@ -222,9 +222,6 @@ def assign_ROI(ppr, offset, T1_forAtlas):
         cmd = 'mrtransform -template {} {}parc.mif {}parc_regridT1.nii -interp nearest'.format(T1_forAtlas,tmp_dir,tmp_dir)
         subprocess.check_call(cmd, shell=True)
 
-
-
-        ################
         # Get the strides from T1_Reg so that we can convert parc with same strides so that indexing is straighforward
         ROI_header = image.Header(tmp_dir + 'ROI_Contacts_T1regSpace.mif')
         ROI_strides = ROI_header.strides()
@@ -291,6 +288,7 @@ fsDefault = '/CODE/fs_files/fs_default.txt'
 fscolorLUT = '/CODE/fs_files/FreeSurferColorLUT.txt'
 lineOffestFSdefault = 4
 T1_forAtlas = '/INPUTS/t1.nii'
+raw_parc = '/INPUTS/aparc+aseg.mgz'
 
 
 # Get timestamps for directories
@@ -316,7 +314,7 @@ else:
     print("'results' directory already exists")
 
 
-assign_ROI(pprFilename, lineOffsetFromLEADCONTACT, T1_forAtlas)
+assign_ROI(pprFilename, lineOffsetFromLEADCONTACT, T1_forAtlas, raw_parc)
 
 print("Script complete")
 
