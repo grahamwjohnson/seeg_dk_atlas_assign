@@ -284,7 +284,7 @@ def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
 # Set up variables for reading in .ppr
 pprFilename = '/INPUTS/crave.ppr'
 lineOffsetFromLEADCONTACT = 5
-fsDefault = '/CODE/fs_files/fs_default.txt'
+fsDefault = '/CODE/fs_files/fs_defaults.txt'
 fscolorLUT = '/CODE/fs_files/FreeSurferColorLUT.txt'
 lineOffestFSdefault = 4
 T1_forAtlas = '/INPUTS/t1.nii'
