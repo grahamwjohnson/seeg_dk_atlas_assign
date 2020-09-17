@@ -3,12 +3,6 @@ From: ubuntu:18.04
 
 # Example command to build .simg from local directory: sudo singularity build seeg_dk_atlas_assign_v1.0.simg build seeg_dk_atlas_assign_v1.0.txt
 
-%files
-    # These files must be sitting in the same directory as this recipe file
-    ./main.py /tmp
-    ./main.sh /tmp
-    ./fs_files/ /tmp
-
 %post -c /bin/bash
 
     cd /
@@ -17,8 +11,28 @@ From: ubuntu:18.04
     mkdir -p APPS
     mkdir -p INSTALLERS
 
+    # Make custom folders
+    mkdir -p INPUTS
+    mkdir -p SUPPLEMENTAL
+    mkdir -p OUTPUTS
+    mkdir -p CODE
+
+    # Set Permissions
+    chmod -R 775 /INPUTS
+    chmod -R 775 /SUPPLEMENTAL
+    chmod -R 775 /APPS
+    chmod -R 775 /OUTPUTS 
+    chmod -R 775 /CODE
+
     # Update all libraries
     apt-get -y update
+
+    # Go get scripts from Github
+    apt-get -y install git npm
+    npm install -g github-files-fetcher
+    fetcher --url=https://github.com/grahamwjohnson/seeg_dk_atlas_assign/tree/master/singularity/main.py --out=/CODE
+    fetcher --url=https://github.com/grahamwjohnson/seeg_dk_atlas_assign/tree/master/singularity/main.sh --out=/CODE
+    fetcher --url=https://github.com/grahamwjohnson/seeg_dk_atlas_assign/tree/master/singularity/fs_files --out=/CODE
 
     # Install xvfb
     apt-get -y install xvfb
@@ -40,27 +54,25 @@ From: ubuntu:18.04
     echo "NIfTIUseSform: 1" > /etc/mrtrix.conf # prefer sform to qform when they both exist (to align with nibabel behavior. FSL maintains both--see https://community.mrtrix.org/t/inconsistent-qform-sform-on-nifti-image/1663)
     cd /
 
-    # Make custom folders
-    mkdir -p INPUTS
-    mkdir -p SUPPLEMENTAL
-    mkdir -p OUTPUTS
-    mkdir -p CODE
-
-    # Add scripts to CODE folder
-    cp /tmp/main.py /CODE
-    cp /tmp/main.sh /CODE
-    cp -r /tmp/fs_files/ /CODE
-
-    # Set Permissions
-    chmod -R 775 /INPUTS
-    chmod -R 775 /SUPPLEMENTAL
-    chmod -R 775 /APPS
-    chmod -R 775 /OUTPUTS 
-    chmod -R 775 /CODE
+    # Install FSL 6.0.1
+    apt-get -y install python wget ca-certificates libglu1-mesa libgl1-mesa-glx libsm6 libice6 libxt6 libpng16-16 libxrender1 libxcursor1 libxinerama1 libfreetype6 libxft2 libxrandr2 libgtk2.0-0 libpulse0 libasound2 libcaca0 libopenblas-base bzip2 dc bc 
+    wget -O /INSTALLERS/fslinstaller.py "https://fsl.fmrib.ox.ac.uk/fsldownloads/fslinstaller.py"
+    cd /INSTALLERS
+    python fslinstaller.py -d /APPS/fsl601 -V 6.0.1
+    cd /
 
     # Clean up
     rm -r /INSTALLERS
-    
+
+%environment -c /bin/bash
+
+    # MRTrix3
+    export PATH="/APPS/mrtrix3/bin:$PATH"
+    # FSL
+    FSLDIR=/APPS/fsl601
+    . ${FSLDIR}/etc/fslconf/fsl.sh
+    PATH=${FSLDIR}/bin:${PATH}
+    export FSLDIR PATH
 
 %environment -c /bin/bash
 

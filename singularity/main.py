@@ -188,7 +188,7 @@ def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
         # NOW assign SEEG contacts to DKS atlas
 
         # Read in T1
-        cmd = 'mrconvert {} {}T1W3D.nii -force -nthreads 0'.format(T1_forAtlas,tmp_dir)
+        cmd = 'mrconvert {} {}T1W3D.mif -force -nthreads 0'.format(T1_forAtlas,tmp_dir)
         subprocess.check_call(cmd, shell=True)
 
         # Bring in the parcellation
@@ -227,7 +227,7 @@ def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
         ROI_strides = ROI_header.strides()
         ROI_strides_option = ' -strides ' + ','.join([str(i) for i in ROI_strides])
 
-        cmd = 'mrconvert {}parc_regridT1.nii {}parc_strideSameAsT1Reg_regridT1.nii -strides 1,2,3'.format(tmp_dir,tmp_dir)
+        cmd = 'mrconvert {}parc_regridT1.nii {}parc_strideSameAsT1Reg_regridT1.nii {}'.format(tmp_dir,tmp_dir,ROI_strides_option)
         subprocess.check_call(cmd, shell=True)
 
         # import the nifti with nibabel and numpy and read coordinate values
