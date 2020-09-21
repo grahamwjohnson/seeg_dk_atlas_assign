@@ -17,13 +17,6 @@ From: ubuntu:18.04
     mkdir -p OUTPUTS
     mkdir -p CODE
 
-    # Set Permissions
-    chmod -R 775 /INPUTS
-    chmod -R 775 /SUPPLEMENTAL
-    chmod -R 775 /APPS
-    chmod -R 775 /OUTPUTS 
-    chmod -R 775 /CODE
-
     # Update all libraries
     apt-get -y update
 
@@ -61,6 +54,13 @@ From: ubuntu:18.04
     python fslinstaller.py -d /APPS/fsl601 -V 6.0.1
     cd /
 
+    # Set Permissions
+    chmod -R 775 /INPUTS
+    chmod -R 775 /SUPPLEMENTAL
+    chmod -R 775 /APPS
+    chmod -R 775 /OUTPUTS 
+    chmod -R 775 /CODE
+
     # Clean up
     rm -r /INSTALLERS
 
@@ -73,8 +73,3 @@ From: ubuntu:18.04
     . ${FSLDIR}/etc/fslconf/fsl.sh
     PATH=${FSLDIR}/bin:${PATH}
     export FSLDIR PATH
-
-%environment -c /bin/bash
-
-    # MRTrix3
-    export PATH="/APPS/mrtrix3/bin:$PATH"
