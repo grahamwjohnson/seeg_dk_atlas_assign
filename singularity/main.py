@@ -14,6 +14,10 @@ from mrtrix3 import app, fsl, image, path, run
 print("Finished importing python modules")
 
 
+# threads of 0 disables multithreading
+threads = int(sys.argv[1])
+print("We will use " + str(threads) + " CPU threads")
+
 out_phrase = "Hello from Bash called by Python called by Bash!"
 cmd = 'echo {}'.format(out_phrase) # how to run bash commands from python
 subprocess.check_call(cmd, shell=True)
@@ -188,14 +192,14 @@ def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
         # NOW assign SEEG contacts to DKS atlas
 
         # Read in T1
-        cmd = 'mrconvert {} {}T1W3D.mif -force -nthreads 0'.format(T1_forAtlas,tmp_dir)
+        cmd = 'mrconvert {} {}T1W3D.mif -force -nthreads {}'.format(T1_forAtlas,tmp_dir,str(threads))
         subprocess.check_call(cmd, shell=True)
 
         # Bring in the parcellation
-        cmd = 'mrconvert {} {}aparc+aseg.mif -force -nthreads 0'.format(raw_parc,tmp_dir)
+        cmd = 'mrconvert {} {}aparc+aseg.mif -force -nthreads {}'.format(raw_parc,tmp_dir,str(threads))
         subprocess.check_call(cmd, shell=True)
 
-        cmd = 'labelconvert {}aparc+aseg.mif {} {} {}parc_init.mif -force -nthreads 0'.format(tmp_dir,fscolorLUT,fsDefault,tmp_dir)
+        cmd = 'labelconvert {}aparc+aseg.mif {} {} {}parc_init.mif -force -nthreads {}'.format(tmp_dir,fscolorLUT,fsDefault,tmp_dir,str(threads))
         subprocess.check_call(cmd, shell=True)
 
         attempts = 0
@@ -203,7 +207,7 @@ def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
         while attempts < 3:
             attempts = attempts + 1
             try:
-                cmd = 'labelsgmfix {}parc_init.mif {}T1W3D.mif  {} {}parc.mif -force -nthreads 0 -scratch /tmp'.format(tmp_dir,tmp_dir,fsDefault,tmp_dir)
+                cmd = 'labelsgmfix {}parc_init.mif {}T1W3D.mif  {} {}parc.mif -force -nthreads {} -scratch /tmp'.format(tmp_dir,tmp_dir,fsDefault,tmp_dir,str(threads))
                 subprocess.check_call(cmd, shell=True)
                 sgmfix_done = 1
                 break
@@ -214,12 +218,12 @@ def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
             raise Exception("labelsgmfix failed all attempts")
 
         # mrconvert the parc.mif to results
-        cmd = 'mrconvert {}parc.mif {}parc.nii.gz -force -nthreads 0'.format(tmp_dir,results_dir)
+        cmd = 'mrconvert {}parc.mif {}parc.nii.gz -force -nthreads {}'.format(tmp_dir,results_dir,str(threads))
         subprocess.check_call(cmd, shell=True)
 
 
         # Need to regrig parc so that it is the same as T1reg or T1 because T1reg or T1 was used to make SEEG ROI
-        cmd = 'mrtransform -template {} {}parc.mif {}parc_regridT1.nii -interp nearest'.format(T1_forAtlas,tmp_dir,tmp_dir)
+        cmd = 'mrtransform -template {} {}parc.mif {}parc_regridT1.nii -interp nearest -nthreads {}'.format(T1_forAtlas,tmp_dir,tmp_dir,str(threads))
         subprocess.check_call(cmd, shell=True)
 
         # Get the strides from T1_Reg so that we can convert parc with same strides so that indexing is straighforward
@@ -227,7 +231,7 @@ def assign_ROI(ppr, offset, T1_forAtlas, raw_parc):
         ROI_strides = ROI_header.strides()
         ROI_strides_option = ' -strides ' + ','.join([str(i) for i in ROI_strides])
 
-        cmd = 'mrconvert {}parc_regridT1.nii {}parc_strideSameAsT1Reg_regridT1.nii {}'.format(tmp_dir,tmp_dir,ROI_strides_option)
+        cmd = 'mrconvert {}parc_regridT1.nii {}parc_strideSameAsT1Reg_regridT1.nii {} -nthreads {}'.format(tmp_dir,tmp_dir,ROI_strides_option,str(threads))
         subprocess.check_call(cmd, shell=True)
 
         # import the nifti with nibabel and numpy and read coordinate values
